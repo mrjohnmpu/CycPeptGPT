@@ -53,61 +53,61 @@ def prepare_dataset(tokenizer):
     return tokenized_dataset
 
 
-# def train_model(tokenized_dataset, tokenizer):
-#     """配置并训练GPT-2模型 (已更新以支持监控)"""
-#     print("--- 步骤 4: 配置与训练模型 ---")
+def train_model(tokenized_dataset, tokenizer):
+    """配置并训练GPT-2模型 (已更新以支持监控)"""
+    print("--- 步骤 4: 配置与训练模型 ---")
     
-#     # 配置一个新的GPT-2模型
-#     config = GPT2Config(
-#         vocab_size=tokenizer.vocab_size,
-#         n_positions=1024,
-#         n_embd=256,
-#         n_layer=6,
-#         n_head=8
-#     )
+    # 配置一个新的GPT-2模型
+    config = GPT2Config(
+        vocab_size=tokenizer.vocab_size,
+        n_positions=1024,
+        n_embd=256,
+        n_layer=6,
+        n_head=8
+    )
 
-#     # 实例化模型
-#     model = GPT2LMHeadModel(config=config)
+    # 实例化模型
+    model = GPT2LMHeadModel(config=config)
 
-#     # 定义数据整理器
-#     data_collator = DataCollatorForLanguageModeling(
-#         tokenizer=tokenizer,
-#         mlm=False
-#     )
+    # 定义数据整理器
+    data_collator = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer,
+        mlm=False
+    )
 
-#     # 定义训练参数 (*** 主要修改部分 ***)
-#     training_args = TrainingArguments(
-#         output_dir=MODEL_PATH,
-#         overwrite_output_dir=True,
-#         num_train_epochs=10,
-#         per_device_train_batch_size=32,
-#         save_steps=5000,
-#         save_total_limit=2,
-#         prediction_loss_only=True,
-#         fp16=True,
-#         # --- 新增的监控相关参数 ---
-#         logging_dir=LOGGING_PATH,          # 指定日志目录
-#         logging_strategy="steps",          # 按步数记录日志
-#         logging_steps=100,                 # 每 100 步记录一次日志
-#         evaluation_strategy="no",          # 如果有验证集，可以设为 "steps"
-#         report_to="tensorboard"            # 告诉 Trainer 将日志报告给 TensorBoard
-#     )
+    # 定义训练参数 (*** 主要修改部分 ***)
+    training_args = TrainingArguments(
+        output_dir=MODEL_PATH,
+        overwrite_output_dir=True,
+        num_train_epochs=10,
+        per_device_train_batch_size=32,
+        save_steps=5000,
+        save_total_limit=2,
+        prediction_loss_only=True,
+        fp16=True,
+        # --- 新增的监控相关参数 ---
+        logging_dir=LOGGING_PATH,          # 指定日志目录
+        logging_strategy="steps",          # 按步数记录日志
+        logging_steps=100,                 # 每 100 步记录一次日志
+        evaluation_strategy="no",          # 如果有验证集，可以设为 "steps"
+        report_to="tensorboard"            # 告诉 Trainer 将日志报告给 TensorBoard
+    )
 
-#     # 实例化训练器 (Trainer)
-#     trainer = Trainer(
-#         model=model,
-#         args=training_args,
-#         data_collator=data_collator,
-#         train_dataset=tokenized_dataset['train'],
-#     )
+    # 实例化训练器 (Trainer)
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        data_collator=data_collator,
+        train_dataset=tokenized_dataset['train'],
+    )
 
-#     # 开始训练
-#     print("开始模型训练...")
-#     trainer.train()
+    # 开始训练
+    print("开始模型训练...")
+    trainer.train()
 
-#     # 保存最终模型
-#     trainer.save_model(MODEL_PATH)
-#     print(f"模型训练完成并保存至 '{MODEL_PATH}' 目录。\n")
+    # 保存最终模型
+    trainer.save_model(MODEL_PATH)
+    print(f"模型训练完成并保存至 '{MODEL_PATH}' 目录。\n")
 
 # def generate_and_sample():
 # # ... a lot of code ...

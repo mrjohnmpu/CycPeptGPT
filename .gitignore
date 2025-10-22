@@ -2,3 +2,5 @@ output/
 logs/
 *.slurm
 *.log
+__pycache__/
+*.pyc

@@ -228,30 +228,30 @@ def train(args, model, dataloader,eval_dataloader):
             # outputs = model(**inputs, labels=batch.to(device))
             outputs = model(
                 input_ids=input_ids,
-                attention_mask=attention_mask
+                attention_mask=attention_mask,
+                labels=labels
             )
-            print(outputs.keys())
-        #     loss, acc = calculate_loss_and_accuracy(outputs, labels, device)
-        #     loss.backward()
-        #     torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
-        #     optimizer.step()
-        #     lr_scheduler.step()
-        #     optimizer.zero_grad()
+            loss, acc = calculate_loss_and_accuracy(outputs, labels, device)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+            optimizer.step()
+            lr_scheduler.step()
+            optimizer.zero_grad()
 
-        #     if batch_steps % args.log_step == 0:
-        #         print("train epoch {}/{}, batch {}/{}, loss {}, accuracy {}".format(
-        #             epoch, args.epochs,
-        #             batch_steps,
-        #             num_training_steps,
-        #             loss, acc,
-        #         ))
+            if batch_steps % args.log_step == 0:
+                print("train epoch {}/{}, batch {}/{}, loss {}, accuracy {}".format(
+                    epoch, args.epochs,
+                    batch_steps,
+                    num_training_steps,
+                    loss, acc,
+                ))
 
-        #     epoch_loss_list.append(loss.cpu().detach().numpy())
-        # epoch_loss = evaluate(model,eval_dataloader)
-        # early_stopping(epoch_loss, model, optimizer, lr_scheduler, epoch, args.best_model_dir, args.best_ckpt_path)
+            epoch_loss_list.append(loss.cpu().detach().numpy())
+        epoch_loss = evaluate(model,eval_dataloader)
+        early_stopping(epoch_loss, model, optimizer, lr_scheduler, epoch, args.best_model_dir, args.best_ckpt_path)
 
-        # model_to_save = model.module if hasattr(model, 'module') else model
-        # model_to_save.save_pretrained(args.final_model_path)
+        model_to_save = model.module if hasattr(model, 'module') else model
+        model_to_save.save_pretrained(args.final_model_path)
 
 
 def evaluate(model, dataloader):
@@ -303,12 +303,13 @@ def get_parameter_number(model):
 if __name__ == '__main__':
     args = setup_args()
     # args.model_path, args.vocab_path = '', './my_token/vocab.txt'
-    args.train_raw_path = 'data/restored_test.csv'
+    args.train_raw_path = '../data/restored_test.csv'
 
 
     # tokenizer = BertTokenizer(vocab_file=args.vocab_path)
     CHEMFORMER_TOKENIZER_FILE = "model/bart_vocab.json"
-    tokenizer = PreTrainedTokenizerFast.from_pretrained("jonghyunlee/MolGPT_pretrained-by-ZINC15")
+    # tokenizer = PreTrainedTokenizerFast.from_pretrained("jonghyunlee/MolGPT_pretrained-by-ZINC15")
+    tokenizer = PreTrainedTokenizerFast.from_pretrained("./MolGPT_pretrained-by-ZINC15")
 
     # tokenizer.pad_token = "<PAD>"
     # tokenizer.bos_token = "^"  
@@ -317,9 +318,9 @@ if __name__ == '__main__':
     # tokenizer.unk_token = "?"
     # tokenizer.sep_token = "<SEP>"
     tokenizer.model_max_length = 576
-    tokenizer.bos_token = "<bos>"
-    tokenizer.eos_token = "<eos>"
-    tokenizer.pad_token = "<pad>"
+    # tokenizer.bos_token = "<bos>"
+    # tokenizer.eos_token = "<eos>"
+    # tokenizer.pad_token = "<pad>"
 
 
     model_config = GPT2Config(
