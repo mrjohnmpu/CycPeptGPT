@@ -72,21 +72,23 @@ def setup_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_path', default="", type=str, help='')
     parser.add_argument('--vocab_path', default="", type=str, help='')
-    parser.add_argument('--best_model_dir', default="../output/best_model_with_mask", type=str,
+    parser.add_argument('--best_model_dir', default="../output/best_model_with_mask_trainer", type=str,
                         help='Trainer 将在此保存 checkpoint')
-    parser.add_argument('--final_model_path', default="../output/final_model", type=str, help='最终模型保存路径')
+    parser.add_argument('--final_model_path', default="../output/final_model_with_mask_trainer", type=str, help='最终模型保存路径')
     # (保留 best_ckpt_path 是为了你之前的 early_stop，Trainer 不需要它)
     # parser.add_argument('--best_ckpt_path', default="../output/best_checkpoint_with_mask.pt", type=str, help='')
     parser.add_argument('--train_raw_path', default='train_raw_data.txt', type=str, help='')
     parser.add_argument('--eval_raw_path', default='test_raw_data.txt', type=str, help='')
-    parser.add_argument('--batch_size', default=2, type=int, required=False,
+    parser.add_argument('--batch_size', default=32, type=int, required=False,
                         help='per_device batch size (每个 GPU 的 batch size)')
+    parser.add_argument('--accumulation_steps', default=4, type=int, required=False)
     parser.add_argument('--epochs', default=1001, type=int, required=False, help='epochs')
     parser.add_argument('--warmup_steps', default=10000, type=int, required=False, help='warm up steps')
     parser.add_argument('--lr', default=5e-5, type=float, required=False, help='learn rate')
     parser.add_argument('--max_grad_norm', default=1.0, type=float, required=False)  # Trainer 会自动使用
     parser.add_argument('--log_step', default=10, type=int, required=False, help='logging steps')
     parser.add_argument('--patience', default=10, type=int, required=False, help='early stopping patience')
+    parser.add_argument('--max_len', default=576, type=int, required=False, help='The max length for each sequence')
     return parser.parse_args()
 
 
@@ -206,11 +208,11 @@ def get_parameter_number(model):
 if __name__ == '__main__':
     seed_everything(42)
     args = setup_args()
-    args.train_raw_path = '../data/restored_test.csv'
+    args.train_raw_path = '../data/restored_train.csv'
 
     # --- 1. 加载 Tokenizer 和 Model (与你原来的一样) ---
-    tokenizer = PreTrainedTokenizerFast.from_pretrained("./MolGPT_pretrained-by-ZINC15")
-    tokenizer.model_max_length = 576
+    tokenizer = PreTrainedTokenizerFast.from_pretrained("jonghyunlee/MolGPT_pretrained-by-ZINC15")
+    tokenizer.model_max_length = args.max_len
 
     if tokenizer.pad_token_id is None:
         print("Warning: pad_token_id not set. Setting to eos_token_id.")
@@ -220,8 +222,8 @@ if __name__ == '__main__':
         architectures=["GPT2LMHeadModel"],
         model_type="GPT2LMHeadModel",
         vocab_size=tokenizer.vocab_size,
-        n_positions=576,
-        n_ctx=576,
+        n_positions=args.max_len,
+        n_ctx=args.max_len,
         n_embd=768,
         n_layer=12,
         n_head=8,
@@ -231,7 +233,7 @@ if __name__ == '__main__':
         task_specific_params={
             "text-generation": {
                 "do_sample": True,
-                "max_length": 576
+                "max_length": args.max_len
             }
         }
     )
@@ -250,12 +252,14 @@ if __name__ == '__main__':
         overwrite_output_dir=True,
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch_size,  # 这是 *每个 GPU* 的 batch size
+        # gradient_accumulation_steps=args.accumulation_steps,
         learning_rate=args.lr,
         warmup_steps=args.warmup_steps,
         max_grad_norm=args.max_grad_norm,
 
         # 评估 和 日志
         eval_strategy="epoch",  # 每隔一个 epoch 评估一次
+        # eval_steps=args.log_step,
         logging_strategy="epoch",
         # logging_strategy="steps",
         # logging_steps=args.log_step,
@@ -263,6 +267,7 @@ if __name__ == '__main__':
 
         # 保存 和 Early Stopping
         save_strategy="epoch",  # 每隔一个 epoch 保存一次
+        # save_steps=args.log_step,
         save_total_limit=3,  # 最多保留 3 个 checkpoint
         load_best_model_at_end=True,  # 训练结束时加载最佳模型
         metric_for_best_model="eval_loss",  # 监控 eval_loss
@@ -285,7 +290,7 @@ if __name__ == '__main__':
         data_collator=data_collator,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
-        compute_metrics=compute_metrics,
+        # compute_metrics=compute_metrics,
         callbacks=[EarlyStoppingCallback(early_stopping_patience=args.patience)]
     )
 
