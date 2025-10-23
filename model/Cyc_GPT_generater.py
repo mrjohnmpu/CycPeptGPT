@@ -23,6 +23,7 @@ from transformers import (
     EarlyStoppingCallback
 )
 
+
 def seed_everything(seed: int):
     """
     固定所有随机种子以确保结果可复现。
@@ -54,6 +55,7 @@ def seed_everything(seed: int):
 
     # print(f"--- 所有随机种子已固定为: {seed} ---")
 
+
 class MyDataset(Dataset):
     def __init__(self, data_list):
         self.data_list = data_list
@@ -70,7 +72,7 @@ def setup_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_path', default="", type=str, help='')
     parser.add_argument('--vocab_path', default="", type=str, help='')
-    parser.add_argument('--best_model_dir', default="../output/best_model", type=str,
+    parser.add_argument('--best_model_dir', default="../output/best_model_with_mask/checkpoint-3960", type=str,
                         help='Trainer 将在此保存 checkpoint')
     parser.add_argument('--train_raw_path', default='train_raw_data.txt', type=str, help='')
     parser.add_argument('--eval_raw_path', default='test_raw_data.txt', type=str, help='')
@@ -90,14 +92,14 @@ def setup_args():
 def decode(matrix):
     chars = []
     for i in matrix:
-        if i == '[SEP]': break
+        if i == '<eos>': break
         chars.append(i.upper())
     seq = "".join(chars)
     return seq
 
+
 def predict(model, tokenizer, batch_size, text=""):
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-
 
     model.to(device)
     model.eval()
@@ -113,7 +115,7 @@ def predict(model, tokenizer, batch_size, text=""):
 
     Seq_list = []
 
-    finished = torch.zeros(batch_size,1).byte().to(device)
+    finished = torch.zeros(batch_size, 1).byte().to(device)
 
     for i in range(max_length):
         # input_tensor = torch.tensor([input_ids])
@@ -121,11 +123,11 @@ def predict(model, tokenizer, batch_size, text=""):
         outputs = model(**inputs)
         logits = outputs.logits
 
-        logits = F.softmax(logits[:,-1,:])
+        logits = F.softmax(logits[:, -1, :])
 
         last_token_id = torch.multinomial(logits, 1)
         # .detach().to('cpu').numpy()
-        EOS_sampled = (last_token_id == tokenizer.sep_token_id)
+        EOS_sampled = (last_token_id == tokenizer.eos_token_id)
         finished = torch.ge(finished + EOS_sampled, 1)
         if torch.prod(finished) == 1:
             print('End')
@@ -138,7 +140,6 @@ def predict(model, tokenizer, batch_size, text=""):
         Seq_list.append(last_token)
     # print(Seq_list)
     Seq_list = np.array(Seq_list).T
-
 
     print("time cost: {}".format(time.time() - time1))
     return Seq_list
@@ -155,15 +156,15 @@ if __name__ == '__main__':
     seed_everything(42)
     args = setup_args()
 
+    tokenizer = PreTrainedTokenizerFast.from_pretrained("./MolGPT_pretrained-by-ZINC15")
+    tokenizer.model_max_length = 576
 
-    tokenizer = PreTrainedTokenizerFast.from_pretrained("jonghyunlee/MolGPT_pretrained-by-ZINC15")
-
-    model = GPT2LMHeadModel.from_pretrained(args.model_path)
+    model = GPT2LMHeadModel.from_pretrained(args.best_model_dir)
 
     output = []
     Seq_all = []
-    for i in range(100):
-        Seq_list = predict(model,tokenizer,batch_size=32)
+    for i in range(2):
+        Seq_list = predict(model, tokenizer, batch_size=32)
 
         Seq_all.extend(Seq_list)
     for j in Seq_all:
@@ -172,4 +173,3 @@ if __name__ == '__main__':
     output = pd.DataFrame(output)
 
     output.to_csv('../output/generate_cyc_seq.csv', index=False, header=False, sep=' ')
-
