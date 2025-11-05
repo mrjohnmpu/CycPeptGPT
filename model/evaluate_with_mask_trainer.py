@@ -47,7 +47,47 @@ class MyDataset(Dataset):
     def __len__(self):
         return len(self.data_list)
 
+def preprocess_logits_for_metrics(logits, labels):
+    """
+    在累积 logits 之前对其进行预处理。
+    我们只需要 argmax，所以返回 token ID。
+    """
+    if isinstance(logits, tuple):
+        # logits 可能是元组 (如 (prediction_scores, ...))
+        logits = logits[0]
+    
+    # 返回 logits 的 argmax，这将成为 compute_metrics 中的 "predictions"
+    return logits.argmax(dim=-1)
+
 def compute_metrics(eval_pred):
+    """ 
+    计算 Token 级别的准确率 (已修改)
+    现在 eval_pred.predictions 是 token ID (来自 preprocess_logits_for_metrics)，
+    而不是原始 logits。
+    """
+    # eval_pred.predictions 已经是 (num_samples, seq_len) 的 token ID
+    preds_ids, labels = eval_pred.predictions, eval_pred.label_ids
+
+    # 2. 直接对 token ID 进行移位
+    # 预测的 IDs 需要向右移一位来对齐 (preds 预测 label[i+1])
+    shift_preds = preds_ids[..., :-1]
+    shift_labels = labels[..., 1:]
+
+    not_ignore = shift_labels != -100  # 忽略 padding
+    num_targets = not_ignore.sum()
+    
+    if num_targets == 0:
+        return {"accuracy": 0.0}
+
+    # 3. 比较移位后的 ID
+    correct = (shift_preds == shift_labels) & not_ignore
+    correct = correct.sum()
+
+    accuracy = correct / num_targets
+
+    return {"accuracy": accuracy}
+
+# def compute_metrics(eval_pred):
     """ 
     计算 Token 级别的准确率 (从训练脚本复制)
     """
@@ -143,10 +183,10 @@ def setup_eval_args():
     parser.add_argument('--model_path', default="../output/best_model_with_mask_trainer/checkpoint-177198", type=str, 
                         help='指向已保存的 final (best) 模型目录的路径。')
     
-    parser.add_argument('--train_raw_path', default='../data/restored_test.csv', type=str, 
+    parser.add_argument('--train_raw_path', default='../data/restored_train.csv', type=str, 
                         help='指向原始训练数据 CSV 的路径，以获取验证集拆分。')
     
-    parser.add_argument('--batch_size', default=3, type=int, 
+    parser.add_argument('--batch_size', default=1, type=int, 
                         help='评估时每个设备的 batch size')
     parser.add_argument('--max_len', default=576, type=int, 
                         help='每个序列的最大长度')
@@ -198,7 +238,8 @@ if __name__ == '__main__':
         tokenizer=tokenizer,
         data_collator=data_collator,
         eval_dataset=eval_dataset,
-        compute_metrics=compute_metrics  # 关键：传入指标计算函数
+        compute_metrics=compute_metrics,
+        preprocess_logits_for_metrics=preprocess_logits_for_metrics
     )
 
     # --- 7. 运行评估 ---
