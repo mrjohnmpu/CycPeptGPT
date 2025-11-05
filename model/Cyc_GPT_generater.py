@@ -72,7 +72,9 @@ def setup_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_path', default="", type=str, help='')
     parser.add_argument('--vocab_path', default="", type=str, help='')
-    parser.add_argument('--best_model_dir', default="../output/best_model_with_mask/checkpoint-3960", type=str,
+    # parser.add_argument('--best_model_dir', default="../output/best_model_with_mask/checkpoint-3960", type=str,
+    #                     help='Trainer 将在此保存 checkpoint')
+    parser.add_argument('--best_model_dir', default="../output/best_model", type=str,
                         help='Trainer 将在此保存 checkpoint')
     parser.add_argument('--train_raw_path', default='train_raw_data.txt', type=str, help='')
     parser.add_argument('--eval_raw_path', default='test_raw_data.txt', type=str, help='')
@@ -156,14 +158,15 @@ if __name__ == '__main__':
     seed_everything(42)
     args = setup_args()
 
-    tokenizer = PreTrainedTokenizerFast.from_pretrained("./MolGPT_pretrained-by-ZINC15")
+    # tokenizer = PreTrainedTokenizerFast.from_pretrained("./MolGPT_pretrained-by-ZINC15")
+    tokenizer = PreTrainedTokenizerFast.from_pretrained("jonghyunlee/MolGPT_pretrained-by-ZINC15")
     tokenizer.model_max_length = 576
 
     model = GPT2LMHeadModel.from_pretrained(args.best_model_dir)
 
     output = []
     Seq_all = []
-    for i in range(2):
+    for i in range(10):
         Seq_list = predict(model, tokenizer, batch_size=32)
 
         Seq_all.extend(Seq_list)

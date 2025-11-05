@@ -1,3 +1,10 @@
+"""
+这份文件加了mask
+采用的最原始的训练流程
+没有实现分布式训练
+"""
+
+
 import os
 import sys
 # 将当前文件的父目录（model）的父目录（CYC_GPT）添加到 sys.path
