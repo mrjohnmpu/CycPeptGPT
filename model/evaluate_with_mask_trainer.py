@@ -186,7 +186,7 @@ def setup_eval_args():
     parser.add_argument('--train_raw_path', default='../data/restored_train.csv', type=str, 
                         help='指向原始训练数据 CSV 的路径，以获取验证集拆分。')
     
-    parser.add_argument('--batch_size', default=1, type=int, 
+    parser.add_argument('--batch_size', default=32, type=int, 
                         help='评估时每个设备的 batch size')
     parser.add_argument('--max_len', default=576, type=int, 
                         help='每个序列的最大长度')
