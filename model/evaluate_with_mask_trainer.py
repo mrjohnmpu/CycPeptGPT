@@ -143,10 +143,10 @@ def setup_eval_args():
     parser.add_argument('--model_path', default="../output/best_model_with_mask_trainer/checkpoint-177198", type=str, 
                         help='指向已保存的 final (best) 模型目录的路径。')
     
-    parser.add_argument('--train_raw_path', default='../data/restored_train.csv', type=str, 
+    parser.add_argument('--train_raw_path', default='../data/restored_test.csv', type=str, 
                         help='指向原始训练数据 CSV 的路径，以获取验证集拆分。')
     
-    parser.add_argument('--batch_size', default=32, type=int, 
+    parser.add_argument('--batch_size', default=3, type=int, 
                         help='评估时每个设备的 batch size')
     parser.add_argument('--max_len', default=576, type=int, 
                         help='每个序列的最大长度')
