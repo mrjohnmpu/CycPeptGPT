@@ -64,21 +64,22 @@ def visualize_generated_smiles(csv_path, output_dir):
             # SMILES 语法无效
             invalid_smiles_count += 1
         else:
-            if check_if_cyclic(mol):
-                # 这是一个有效的、环状的分子
-                valid_mols.append(mol)
-                legends.append(f"ID {i}\n{smiles[:40]}...")  # 图例显示部分SMILES
-            else:
-                # 这是一个有效的、但非环状（线性）的分子
-                non_cyclic_count += 1
+            valid_mols.append(mol)
+            # if check_if_cyclic(mol):
+            #     # 这是一个有效的、环状的分子
+            #     valid_mols.append(mol)
+            #     legends.append(f"ID {i}\n{smiles[:40]}...")  # 图例显示部分SMILES
+            # else:
+            #     # 这是一个有效的、但非环状（线性）的分子
+            #     non_cyclic_count += 1
 
     # 5. 打印分析报告
     print("\n--- 分析报告 ---")
     print(f"总共SMILES:    {len(smiles_list)}")
     print(f"唯一SMILES:    {len(unique_smiles)}")
     print(f"无效SMILES:    {invalid_smiles_count} (语法错误)")
-    print(f"有效(线性):    {non_cyclic_count}")
-    print(f"有效(环状):    {len(valid_mols)}")
+    # print(f"有效(线性):    {non_cyclic_count}")
+    # print(f"有效(环状):    {len(valid_mols)}")
     print("--------------------")
 
     if not valid_mols:
