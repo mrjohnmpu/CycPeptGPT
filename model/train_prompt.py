@@ -82,7 +82,7 @@ def setup_args():
     # parser.add_argument('--best_ckpt_path', default="../output/best_checkpoint_with_mask.pt", type=str, help='')
     parser.add_argument('--train_raw_path', default='train_raw_data.txt', type=str, help='')
     parser.add_argument('--eval_raw_path', default='test_raw_data.txt', type=str, help='')
-    parser.add_argument('--batch_size', default=64, type=int, required=False,
+    parser.add_argument('--batch_size', default=32, type=int, required=False,
                         help='per_device batch size (每个 GPU 的 batch size)')
     parser.add_argument('--accumulation_steps', default=4, type=int, required=False)
     parser.add_argument('--epochs', default=200, type=int, required=False, help='epochs')
