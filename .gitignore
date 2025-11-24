@@ -4,3 +4,5 @@ logs/
 *.log
 __pycache__/
 *.pyc
+early_stop/
+lightning_logs
