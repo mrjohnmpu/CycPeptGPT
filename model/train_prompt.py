@@ -32,43 +32,17 @@ def seed_everything(seed: int):
     """
     固定所有随机种子以确保结果可复现。
     """
-    # 1. 固定 Python 内置的 random 模块
     random.seed(seed)
-
-    # 2. 固定 os.environ['PYTHONHASHSEED']
-    #    注意: 这需要你在启动 Python 脚本 *之前* 就设置好
-    #    e.g. export PYTHONHASHSEED=42
-    #    在脚本内部设置可能不会生效
     os.environ['PYTHONHASHSEED'] = str(seed)
-
-    # 3. 固定 NumPy
     np.random.seed(seed)
-
-    # 4. 固定 PyTorch (CPU)
     torch.manual_seed(seed)
 
-    # 5. 固定 PyTorch (GPU, if available)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)  # 为当前 GPU 设置种子
-        torch.cuda.manual_seed_all(seed)  # 为所有 GPU 设置种子 (在 DDP 中很重要)
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
 
-    # 6. 固定 cuDNN 的行为
-    #    这将强制 cuDNN 使用确定性的（但可能更慢的）算法
     torch.backends.cudnn.deterministic = True
     # torch.backends.cudnn.benchmark = False
-
-    # print(f"--- 所有随机种子已固定为: {seed} ---")
-
-# class MyDataset(Dataset):
-#     def __init__(self, data_list):
-#         self.data_list = data_list
-#
-#     def __getitem__(self, index):
-#         input_ids = self.data_list[index]
-#         return input_ids
-#
-#     def __len__(self):
-#         return len(self.data_list)
 
 
 def setup_args():
@@ -82,7 +56,7 @@ def setup_args():
     # parser.add_argument('--best_ckpt_path', default="../output/best_checkpoint_with_mask.pt", type=str, help='')
     parser.add_argument('--train_raw_path', default='train_raw_data.txt', type=str, help='')
     parser.add_argument('--eval_raw_path', default='test_raw_data.txt', type=str, help='')
-    parser.add_argument('--batch_size', default=32, type=int, required=False,
+    parser.add_argument('--batch_size', default=4, type=int, required=False,
                         help='per_device batch size (每个 GPU 的 batch size)')
     parser.add_argument('--accumulation_steps', default=4, type=int, required=False)
     parser.add_argument('--epochs', default=200, type=int, required=False, help='epochs')
@@ -99,27 +73,23 @@ def setup_args():
     parser.add_argument("--logit_scale", default=False, help="learns to scale logits for classification")
     parser.add_argument("--outbias", default=False, help="learns to add bias for classification")
     parser.add_argument("--gen_weight", default=0.9, type=float, help="scalar multiple for generative loss (lambda)")
+    parser.add_argument('--n_prefixes', default=2, type=int, required=False, help='number of soft prefixes')
+    parser.add_argument('--mid_dim', default=512, type=int, required=False, help='hidden dimension of soft prompt MLP')
     return parser.parse_args()
 
 
-# ⬇️ 1. 这是你原来的 calculate_loss_and_accuracy，转换成了 Trainer 需要的格式
 def compute_metrics(eval_pred):
     """
     在 Trainer 中计算 token 级别的准确率。
     """
-    # eval_pred 是一个 EvalPrediction 对象, 包含 predictions 和 label_ids
-    # 它们是 numpy 数组
     logits, labels = eval_pred.predictions, eval_pred.label_ids
 
-    # --- 1. 移位 (Shift) ---
     shift_logits = logits[..., :-1, :]
     shift_labels = labels[..., 1:]
 
-    # --- 2. 计算预测 (Predictions) ---
     preds = np.argmax(shift_logits, axis=-1)
 
-    # --- 3. 计算准确率 (Accuracy) ---
-    not_ignore = shift_labels != -100  # 忽略 padding
+    not_ignore = shift_labels != -100
 
     num_targets = not_ignore.sum()
     if num_targets == 0:
@@ -130,7 +100,6 @@ def compute_metrics(eval_pred):
 
     accuracy = correct / num_targets
 
-    # 返回一个字典，键是指标名称
     return {"accuracy": accuracy}
 
 
@@ -140,8 +109,6 @@ def calculate_loss_and_accuracy_(outputs, labels, device):
     shift_logits = logits[..., 1:-1, :].contiguous()
     shift_labels = labels[..., 2:].contiguous().to(device)
 
-    # Flatten the tokens
-    # **重要**: `tokenizer` 必须是全局可访问的，或者传递进来
     loss_fct = CrossEntropyLoss(ignore_index=tokenizer.pad_token_id, reduction='none')
     loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
 
@@ -151,80 +118,126 @@ def calculate_loss_and_accuracy_(outputs, labels, device):
     return loss, not_ignore
 
 
-# ⬇️ 2. 你的 DataCollator 保持不变，它写得很棒
-# class DataCollatorForLanguageModeling:
-#     def __init__(self, tokenizer):
-#         self.tokenizer = tokenizer
-#         self.pad_token_id = tokenizer.pad_token_id
-#         if self.pad_token_id is None:
-#             raise ValueError("Tokenizer must have a pad_token_id.")
+# def prompt_contrast_train(args, model, train_dataset):
+#     train_sampler = RandomSampler(train_dataset)
+#     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.batch_size)
 #
-#     def __call__(self, batch):
-#         max_len = max(len(seq) for seq in batch)
-#         input_ids_batch = []
-#         labels_batch = []
-#         attention_mask_batch = []
-#         for seq in batch:
-#             pad_len = max_len - len(seq)
-#             padded_inputs = seq + [self.pad_token_id] * pad_len
-#             input_ids_batch.append(padded_inputs)
-#             padded_labels = seq + [-100] * pad_len
-#             labels_batch.append(padded_labels)
-#             mask = [1] * len(seq) + [0] * pad_len
-#             attention_mask_batch.append(mask)
-#         return {
-#             "input_ids": torch.tensor(input_ids_batch, dtype=torch.long),
-#             "labels": torch.tensor(labels_batch, dtype=torch.long),
-#             "attention_mask": torch.tensor(attention_mask_batch, dtype=torch.long)
-#         }
-
-
-# 3. data_loader 被修改为只返回 Dataset 对象
-# def prepare_datasets(args, tokenizer):
-#     data_list = []
-#     eval_data_list = []
+#     num_training_steps = args.epochs * len(train_dataloader)
 #
-#     df = pd.read_csv(args.train_raw_path)
-#     print("数据总行数:{}".format(len(df)))
+#     for param in model.transformer.parameters():
+#         param.requires_grad = False
+#     for param in model.lm_head.parameters():
+#         param.requires_grad = False
 #
-#     df.dropna(subset=['SMILES'], inplace=True)
-#     df = df[df['SMILES'].str.len() > 0]
-#     print("清洗后数据总行数:{}".format(len(df)))
+#     model.transformer.wte.learned_embedding.requires_grad = True
 #
-#     train_df, eval_df = train_test_split(df, test_size=0.1, shuffle=True, random_state=42)
-#     print(f"训练集大小: {len(train_df)}, 验证集大小: {len(eval_df)}")
+#     optimizer = AdamW([model.transformer.wte.learned_embedding], lr=args.lr)
 #
-#     max_seq_length = tokenizer.model_max_length
-#     train_smiles_list = train_df['SMILES'].tolist()
-#     eval_smiles_list = eval_df['SMILES'].tolist()
+#     lr_scheduler = get_scheduler(
+#         name="linear",
+#         optimizer=optimizer,
+#         num_warmup_steps=args.warmup_steps,
+#         num_training_steps=num_training_steps
+#     )
+#     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+#     model.to(device)
+#     model.train()
+#     batch_steps = 0
 #
-#     # (只在主进程显示 tqdm，DDP 环境下 rank 0 是主进程)
-#     is_main_process = os.environ.get("RANK", "0") == "0"
+#     early_stopping = EarlyStopping(patience=args.patience, verbose=True)  # 取决于 pytorchtools.py
 #
-#     for smiles_string in tqdm(train_smiles_list, desc="Tokenizing training data", disable=not is_main_process):
-#         tokenized_ids = tokenizer.encode(
-#             smiles_string,
-#             truncation=True,
-#             max_length=max_seq_length
-#         )
-#         data_list.append(tokenized_ids)
+#     print("--- 开始对比学习训练 ---")
+#     print(f"Total steps: {num_training_steps}")
+#     print(f"Trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
 #
-#     train_dataset = MyDataset(data_list)  #返回 Dataset
+#     for epoch in range(args.epochs):
+#         epoch_loss_list = []
+#         print("\n")
+#         print("***********")
+#         print(f"Epoch {epoch + 1}/{args.epochs}")
+#         print(f"LR: {optimizer.state_dict()['param_groups'][0]['lr']}")
+#         print("***********")
+#         print("\n")
 #
-#     for smiles_string in tqdm(eval_smiles_list, desc="Tokenizing eval data", disable=not is_main_process):
-#         tokenized_ids = tokenizer.encode(
-#             smiles_string,
-#             truncation=True,
-#             max_length=max_seq_length
-#         )
-#         eval_data_list.append(tokenized_ids)
+#         progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch + 1}")
 #
-#     eval_dataset = MyDataset(eval_data_list)  #返回 Dataset
+#         for batch in progress_bar:
+#             batch_steps += 1
 #
-#     return train_dataset, eval_dataset
-
-
-# ⬇️ 4. train 和 evaluate 函数被完全移除
+#             batch = tuple(t.to(device) for t in batch)
+#             batch_0 = batch[0]  # input_ids
+#             batch_1 = batch[1]  # attention_mask
+#             batch_3 = batch[3]  # labels
+#
+#             pt_id = tokenizer.unk_token_id
+#             nt_id = tokenizer.eos_token_id
+#
+#             pt_token = (torch.ones(batch_0.shape[0]) * pt_id).type_as(batch_0).view(-1, 1)
+#             nt_token = (torch.ones(batch_0.shape[0]) * nt_id).type_as(batch_0).view(-1, 1)
+#
+#             seq_a = torch.cat((pt_token, batch_0), 1)
+#             seq_b = torch.cat((nt_token, batch_0), 1)
+#
+#             mask_token = torch.ones(batch_1.shape[0], 1).type_as(batch_1)
+#             mask_a = torch.cat((mask_token, batch_1), 1)
+#             mask_b = torch.cat((mask_token, batch_1), 1)
+#
+#             bsz = seq_a.shape[0]
+#
+#             inputs_pos = {"input_ids": seq_a, "labels": seq_a, "attention_mask": mask_a}
+#             inputs_neg = {"input_ids": seq_b, "labels": seq_b, "attention_mask": mask_b}
+#
+#             outputs_a = model(**inputs_neg)
+#             loss_a, loss_mask = calculate_loss_and_accuracy_(outputs_a, seq_a, device)
+#             loss_lengths = torch.sum(loss_mask, 1, keepdim=True)
+#
+#             outputs_b = model(**inputs_pos)
+#             loss_b, _ = calculate_loss_and_accuracy_(outputs_b, seq_b, device)
+#
+#             gen_loss_a = (batch_3 == 0).to(torch.float32).unsqueeze(1) * loss_a / loss_lengths
+#             gen_loss_b = (batch_3 == 1).to(torch.float32).unsqueeze(1) * loss_b / loss_lengths
+#             gen_loss = torch.sum(gen_loss_a + gen_loss_b) / bsz
+#
+#             if args.sum_loss:
+#                 loss_a = loss_a.sum(dim=1)
+#                 loss_b = loss_b.sum(dim=1)
+#             else:
+#                 loss_a = (loss_a / loss_lengths).sum(dim=1)
+#                 loss_b = (loss_b / loss_lengths).sum(dim=1)
+#
+#             class_logits = torch.stack((-loss_a, -loss_b), dim=1)
+#             class_labels = batch_3
+#
+#             if args.logit_scale:
+#                 class_logits *= model.logit_scale
+#             if args.outbias:
+#                 class_logits += model.bias
+#
+#             loss_fn = torch.nn.CrossEntropyLoss()
+#
+#             class_loss = loss_fn(class_logits, class_labels)
+#             loss = class_loss * (1 - args.gen_weight) + args.gen_weight * gen_loss
+#
+#             loss.backward()
+#             torch.nn.utils.clip_grad_norm_([model.transformer.wte.learned_embedding], args.max_grad_norm)
+#             optimizer.step()
+#             lr_scheduler.step()
+#             optimizer.zero_grad()
+#
+#             epoch_loss_list.append(loss.item())
+#             progress_bar.set_description(f"Epoch {epoch + 1} | Loss: {loss.item():.4f}")
+#
+#             print(f"  Step {batch_steps}/{num_training_steps}, Loss: {loss.item()}")
+#
+#         epoch_loss = np.mean(epoch_loss_list)
+#         print(f"Epoch {epoch + 1} average loss: {epoch_loss}")
+#         output_dir = os.path.join(args.best_model_dir, f"best_model_epoch_{epoch + 1}")
+#         ckpt_dir = os.path.join(args.ckpt_model_path, f"best_checkpoint_epoch_{epoch + 1}")
+#         early_stopping(epoch_loss, model, optimizer, lr_scheduler, epoch, output_dir, ckpt_dir)
+#
+#         if early_stopping.early_stop:
+#             print("Early stopping")
+#             break
 
 def prompt_contrast_train(args, model, train_dataset):
     train_sampler = RandomSampler(train_dataset)
@@ -232,24 +245,53 @@ def prompt_contrast_train(args, model, train_dataset):
 
     num_training_steps = args.epochs * len(train_dataloader)
 
-    # --- 参数冻结 ---
-    # 冻结除了 soft embedding 之外的所有参数
-    # for param in model.parameters():
+    # for param in model.transformer.parameters():
     #     param.requires_grad = False
-    for param in model.transformer.parameters():
-        param.requires_grad = False
-    for param in model.lm_head.parameters():
+    # for param in model.lm_head.parameters():
+    #     param.requires_grad = False
+    #
+    # # model.transformer.wte.learned_embedding.requires_grad = True
+    # model.transformer.wte.input_tokens.requires_grad = True
+    # # 2. 确保 MLP 网络 W 可训练
+    # for param in model.transformer.wte.trans.parameters():
+    #     param.requires_grad = True
+    #
+    #
+    # # optimizer = AdamW([model.transformer.wte.learned_embedding], lr=args.lr)
+    # # 我们需要优化的是 input_tokens 和 trans 中的所有参数
+    # trainable_params = [
+    #     {'params': [model.transformer.wte.input_tokens]},
+    #     {'params': model.transformer.wte.trans.parameters()}
+    # ]
+    # optimizer = AdamW(trainable_params, lr=args.lr)
+
+    # 1. 先冻结模型所有参数
+    for param in model.parameters():
         param.requires_grad = False
 
-    # 唯一可训练的参数
-    # 注意：在你的 SoftEmbedding 实现中，`self.learned_embedding` 已经是 Parameter
-    # 我们需要设置它 `requires_grad=True`
-    # 在替换嵌入层后，路径是 model.transformer.wte.learned_embedding
-    model.transformer.wte.learned_embedding.requires_grad = True
+    # 2. 解冻重参数化涉及的组件
+    # 注意：此时 learned_embedding 是 None，不要碰它
+    if model.transformer.wte.learned_embedding is None:
+        # 训练模式：解冻 H' 和 MLP
+        model.transformer.wte.input_tokens.requires_grad = True
+        for param in model.transformer.wte.trans.parameters():
+            param.requires_grad = True
+        print("Reparameterization mode detected: Training input_tokens and MLP.")
 
-    # --- 优化器 ---
-    # 只优化这一个参数
-    optimizer = AdamW([model.transformer.wte.learned_embedding], lr=args.lr)
+        # 3. 定义优化器 (针对 H' 和 MLP)
+        optimizer_params = [
+            {'params': [model.transformer.wte.input_tokens]},
+            {'params': model.transformer.wte.trans.parameters()}
+        ]
+    else:
+        # 推理模式或非重参数化模式 (兼容旧代码)
+        model.transformer.wte.learned_embedding.requires_grad = True
+        print("Standard mode detected: Training learned_embedding directly.")
+        optimizer_params = [model.transformer.wte.learned_embedding]
+
+    optimizer = AdamW(optimizer_params, lr=args.lr)
+
+
 
     lr_scheduler = get_scheduler(
         name="linear",
@@ -262,7 +304,7 @@ def prompt_contrast_train(args, model, train_dataset):
     model.train()
     batch_steps = 0
 
-    early_stopping = EarlyStopping(patience=args.patience, verbose=True) # 取决于 pytorchtools.py
+    early_stopping = EarlyStopping(patience=args.patience, verbose=True)  # 取决于 pytorchtools.py
 
     print("--- 开始对比学习训练 ---")
     print(f"Total steps: {num_training_steps}")
@@ -283,110 +325,142 @@ def prompt_contrast_train(args, model, train_dataset):
             batch_steps += 1
 
             batch = tuple(t.to(device) for t in batch)
-            batch_0 = batch[0]  # input_ids
-            batch_1 = batch[1]  # attention_mask
-            batch_3 = batch[3]  # labels
+            input_ids = batch[0]  # SMILES 序列 ID
+            attention_mask = batch[1]  # 原始 Mask
+            labels_class = batch[3]  # 0 (Linear) 或 1 (Cyclic)
+            batch_size = input_ids.shape[0]
 
-            # **重要**: `tokenizer` 必须是全局可访问的
-            pt_id = tokenizer.unk_token_id  # 你的参考代码用 unk 和 mask
-            nt_id = tokenizer.eos_token_id
+            # 2. 构造前缀索引 (用于控制 SoftEmbedding)
+            # 场景 A: 强制使用前缀 0 (Linear)
+            idx_linear = torch.zeros(batch_size, dtype=torch.long, device=device)
+            # 场景 B: 强制使用前缀 1 (Cyclic/Head_to_Tail)
+            idx_cyclic = torch.ones(batch_size, dtype=torch.long, device=device)
 
-            pt_token = (torch.ones(batch_0.shape[0]) * pt_id).type_as(batch_0).view(-1, 1)
-            nt_token = (torch.ones(batch_0.shape[0]) * nt_id).type_as(batch_0).view(-1, 1)
+            # 3. 获取 Embeddings (手动调用 model.transformer.wte)
+            # 这里调用的是你修改后的 SoftEmbedding.forward
+            # 注意：我们直接传入原始 input_ids，SoftEmbedding 会自动在前面拼上前缀向量
+            embeds_linear = model.transformer.wte(input_ids, prefix_indices=idx_linear)  # 每条序列前面都加上线性前缀
+            embeds_cyclic = model.transformer.wte(input_ids, prefix_indices=idx_cyclic)  # 每条序列前面都加上环化前缀
 
-            seq_a = torch.cat((pt_token, batch_0), 1)
-            seq_b = torch.cat((nt_token, batch_0), 1)
+            # 4. 修正 Attention Mask
+            # SoftEmbedding 增加的长度是 args.n_tokens。
+            # 我们需要构造一个全是 1 的 mask 来覆盖前缀部分。
+            prefix_mask = torch.ones(batch_size, args.n_tokens, device=device)
+            extended_attention_mask = torch.cat([prefix_mask, attention_mask], dim=1)
 
-            mask_token = torch.ones(batch_1.shape[0], 1).type_as(batch_1)
-            mask_a = torch.cat((mask_token, batch_1), 1)
-            mask_b = torch.cat((mask_token, batch_1), 1)
+            # 5. 构造生成任务的 Labels (用于计算 LM Loss)
+            # 前缀部分不参与 Loss 计算，设为 -100
+            prefix_labels = torch.full((batch_size, args.n_tokens), -100, dtype=torch.long, device=device)
 
-            bsz = seq_a.shape[0]
+            # 原始序列的 Labels 通常就是 input_ids 本身
+            # 但需要把 padding 部分设为 -100 以忽略计算
+            lm_labels = input_ids.clone()
+            lm_labels[attention_mask == 0] = -100
 
-            inputs_pos = {"input_ids": seq_a, "labels": seq_a, "attention_mask": mask_a}
-            inputs_neg = {"input_ids": seq_b, "labels": seq_b, "attention_mask": mask_b}
+            # 拼接
+            extended_labels = torch.cat([prefix_labels, lm_labels], dim=1)
 
-            # 假设: 标签 0 应该匹配 neg 提示, 标签 1 应该匹配 pos 提示
-            # outputs_a 是 neg 提示 (seq_b) 的输出
-            outputs_a = model(**inputs_neg)
-            loss_a, loss_mask = calculate_loss_and_accuracy_(outputs_a, seq_a, device)
-            loss_lengths = torch.sum(loss_mask, 1, keepdim=True)
-            # loss_lengths = torch.clamp(loss_lengths, min=1)
-            # print("loss_lengths = {}".format(loss_lengths))
+            # --- 计算 Linear 前缀下的输出 ---
+            # 对应原本的 outputs_a
+            outputs_linear = model(
+                inputs_embeds=embeds_linear,
+                attention_mask=extended_attention_mask,
+                labels=extended_labels
+            )
 
-            # outputs_b 是 pos 提示 (seq_a) 的输出
-            outputs_b = model(**inputs_pos)
-            loss_b, _ = calculate_loss_and_accuracy_(outputs_b, seq_b, device)
+            # --- 计算 Cyclic 前缀下的输出 ---
+            # 对应原本的 outputs_b
+            outputs_cyclic = model(
+                inputs_embeds=embeds_cyclic,
+                attention_mask=extended_attention_mask,
+                labels=extended_labels  # 这里的 label 只是为了让 model 内部算个 loss，我们后面主要用 logits
+            )
 
-            # --- 生成损失 (Gen Loss) ---
-            # 标签 0 的样本 (gen_loss_a)
-            gen_loss_a = (batch_3 == 0).to(torch.float32).unsqueeze(1) * loss_a / loss_lengths
-            # 标签 1 的样本 (gen_loss_b)
-            gen_loss_b = (batch_3 == 1).to(torch.float32).unsqueeze(1) * loss_b / loss_lengths
-            gen_loss = torch.sum(gen_loss_a + gen_loss_b) / bsz
+            # -------------------------------------------------------
+            # 前向传播计算 Logits
+            # -------------------------------------------------------
+            # 计算 P(x | Prefix_0)
+            loss_linear = outputs_linear.loss  # 这是 mean loss，我们需要 per-sample loss 用于对比
+            # 为了对比损失，我们需要每个样本的 loss，所以重新计算
+            logits_linear = outputs_linear.logits
+            shift_logits_linear = logits_linear[..., :-1, :].contiguous()
+            shift_labels = extended_labels[..., 1:].contiguous()
+            loss_fct = CrossEntropyLoss(reduction='none', ignore_index=-100)
+            # Sum over sequence length to get log probability (negative) ==> [batch_size, seq_len]
+            nll_linear = loss_fct(
+                shift_logits_linear.view(-1, shift_logits_linear.size(-1)), shift_labels.view(-1)
+            ).view(batch_size, -1).sum(dim=1)
 
-            # --- 分类损失 (Class Loss) ---
-            if args.sum_loss:
-                loss_a = loss_a.sum(dim=1)
-                loss_b = loss_b.sum(dim=1)
-            else:
-                loss_a = (loss_a / loss_lengths).sum(dim=1)
-                loss_b = (loss_b / loss_lengths).sum(dim=1)
+            # 计算 P(x | Prefix_1)
+            logits_cyclic = outputs_cyclic.logits
+            shift_logits_cyclic = logits_cyclic[..., :-1, :].contiguous()
+            nll_cyclic = loss_fct(
+                shift_logits_cyclic.view(-1, shift_logits_cyclic.size(-1)), shift_labels.view(-1)
+            ).view(batch_size, -1).sum(dim=1)
 
-            # loss_a 是 neg 提示的损失, loss_b 是 pos 提示的损失
-            # 我们希望:
-            # - 标签 0: neg 损失 (loss_a) 小, pos 损失 (loss_b) 大
-            # - 标签 1: neg 损失 (loss_a) 大, pos 损失 (loss_b) 小
+            # -------------------------------------------------------
+            # 计算 Loss
+            # -------------------------------------------------------
+            # L_LM: 语言模型损失 (只优化正确的那个前缀)
+            # 如果 label=0, loss = nll_0; 如果 label=1, loss = nll_1
+            loss_lm_vec = torch.where(labels_class == 0, nll_linear, nll_cyclic)
+            loss_lm = loss_lm_vec.mean()
 
-            # logit = -loss。 loss 越小，logit 越大
-            # class_logits 维度: [bsz, 2]
-            # 第 0 列: -loss_a (对应 "0" 类, neg)
-            # 第 1 列: -loss_b (对应 "1" 类, pos)
-            class_logits = torch.stack((-loss_a, -loss_b), dim=1)
-            class_labels = batch_3  # 真实标签 (0 或 1)
+            # L_d: 判别式损失 (Contrastive)
+            # 目标: Log( P(correct) / (P(correct) + P(wrong)) )
+            #      = Log( exp(-nll_correct) / (exp(-nll_0) + exp(-nll_1)) )
+            #      = -nll_correct - LogSumExp(-nll_0, -nll_1)
 
-            if args.logit_scale:
-                # (省略 DataParallel 检查)
-                class_logits *= model.logit_scale
-            if args.outbias:
-                class_logits += model.bias
+            nll_correct = torch.where(labels_class == 0, nll_linear, nll_cyclic)
+            # 为了数值稳定，使用 log_softmax
+            # stack logits: [batch, 2] -> col 0 is neg_nll_0, col 1 is neg_nll_1
+            log_probs_stack = torch.stack([-nll_linear, -nll_cyclic], dim=1)
+            loss_d = torch.nn.CrossEntropyLoss()(log_probs_stack, labels_class)
 
-            loss_fn = torch.nn.CrossEntropyLoss()
-
-            # --- 最终损失 (Final Loss) ---
-            class_loss = loss_fn(class_logits, class_labels)
-            loss = class_loss * (1 - args.gen_weight) + args.gen_weight * gen_loss
+            loss = args.gen_weight * loss_lm + (1 - args.gen_weight) * loss_d
 
             loss.backward()
-            torch.nn.utils.clip_grad_norm_([model.transformer.wte.learned_embedding], args.max_grad_norm)
+            # torch.nn.utils.clip_grad_norm_([model.transformer.wte.learned_embedding], args.max_grad_norm)
+            # -------------------------------------------------------
+            # 梯度裁剪 (Gradient Clipping)
+            # -------------------------------------------------------
+            if model.transformer.wte.learned_embedding is None:
+                # 重参数化模式：裁剪 H' 和 MLP 的梯度
+                # 收集所有需要裁剪的参数
+                params_to_clip = [model.transformer.wte.input_tokens] + list(model.transformer.wte.trans.parameters())
+            else:
+                # 普通模式：裁剪 learned_embedding
+                params_to_clip = [model.transformer.wte.learned_embedding]
+
+            # 执行裁剪
+            torch.nn.utils.clip_grad_norm_(params_to_clip, args.max_grad_norm)
             optimizer.step()
             lr_scheduler.step()
             optimizer.zero_grad()
 
             epoch_loss_list.append(loss.item())
-            progress_bar.set_description(f"Epoch {epoch + 1} | Loss: {loss.item():.4f}")
+            progress_bar.set_description(
+                f"Epoch {epoch + 1} | Loss: {loss.item():.4f} | LM Loss: {loss_lm.item():.4f} | D Loss: {loss_d.item():.4f}")
 
             print(f"  Step {batch_steps}/{num_training_steps}, Loss: {loss.item()}")
-
-            # if batch_steps % args.log_step == 0:
-            #     print(f"  Step {batch_steps}/{num_training_steps}, Loss: {loss.item()}")
 
         epoch_loss = np.mean(epoch_loss_list)
         print(f"Epoch {epoch + 1} average loss: {epoch_loss}")
         output_dir = os.path.join(args.best_model_dir, f"best_model_epoch_{epoch + 1}")
         ckpt_dir = os.path.join(args.ckpt_model_path, f"best_checkpoint_epoch_{epoch + 1}")
+        # 在保存最终模型之前，必须调用 reparameterize()
+        model.transformer.wte.reparameterize()
         early_stopping(epoch_loss, model, optimizer, lr_scheduler, epoch, output_dir, ckpt_dir)
 
         if early_stopping.early_stop:
             print("Early stopping")
-            break  # 退出 epoch 循环
+            break
 
 
 def get_parameter_number(model):
     total_num = sum(p.numel() for p in model.parameters())
     trainable_num = sum(p.numel() for p in model.parameters() if p.requires_grad)
     return {'Total': total_num, 'Trainable': trainable_num}
-
 
 
 def load_and_cache_examples(args, filepath, tokenizer):
@@ -401,13 +475,8 @@ def load_and_cache_examples(args, filepath, tokenizer):
     with open(filepath, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
 
-        # 使用 enumerate 来为 'id' 提供一个占位符
         for i, row in enumerate(reader):
 
-            # --- MODIFICATION START ---
-
-            # 1. 获取文本: 你的 SMILES 字符串
-            # 检查列名是否存在
             if 'SMILES' not in row:
                 raise ValueError("CSV 文件中未找到 'SMILES' 列")
             if 'Cyclization' not in row:
@@ -415,31 +484,20 @@ def load_and_cache_examples(args, filepath, tokenizer):
 
             text = row['SMILES']
 
-            # 2. 获取 ID: 参考代码需要一个 id，但后续没用。我们用行号
             example_id = str(i)
 
-            # 3. 确定标签 (Label):
-            #    线肽 (linear) = 0
-            #    其他环肽 = 1
             cyclization_type = row['Cyclization']
             if cyclization_type == 'linear':
                 label = 0
             else:
-                # 包含了 'head_to_tail', 'sc_to_tail', 'disulfide_bridge'
                 label = 1
 
-            # 目标格式 [text, id, label]
             example = [text, example_id, label]
-
-            # --- MODIFICATION END ---
-
-            # --- 下面是参考代码的原始逻辑，现在可以无缝衔接 ---
 
             if args.sup_data_num <= 0:
                 if not args.balanced:
                     data.append(example)
                 else:
-                    # 分类存储，用于后续平衡
                     if label == 1:
                         data_pos.append(example)
                     else:
@@ -447,14 +505,11 @@ def load_and_cache_examples(args, filepath, tokenizer):
                         data_neg.append(example)
 
             else:
-                # (这个逻辑是为多类准备的，但我们将其适配为二分类)
                 label_str = str(label)
                 if not label_str in data_taski.keys():
                     data_taski[label_str] = []
-                # 原始代码 [text, id, label, label]
                 data_taski[label_str].append([text, example_id, label, label])
 
-    # --- 处理数据平衡 (如果启用) ---
     if args.sup_data_num <= 0 and args.balanced:
         print(f"Balancing data... Pos: {len(data_pos)}, Neg: {len(data_neg)}")
         if len(data_pos) > len(data_neg):
@@ -467,7 +522,6 @@ def load_and_cache_examples(args, filepath, tokenizer):
             data = data_neg + data_pos
         print(f"Balanced data size: {len(data)}")
 
-    # --- 处理 sup_data_num 逻辑 (如果启用) ---
     elif args.sup_data_num > 0:
         for label_key in data_taski.keys():
             if len(data_taski[label_key]) > args.sup_data_num:
@@ -475,26 +529,22 @@ def load_and_cache_examples(args, filepath, tokenizer):
             else:
                 add_data = data_taski[label_key]
             for ex in add_data:
-                # 转换回 [text, id, label] 格式
                 data.append([ex[0], ex[1], ex[2]])
         print(f"Using sup_data_num: {len(data)} total")
 
-    # 如果 data 为空，则
     if not data and not (args.sup_data_num <= 0 and args.balanced):
         raise ValueError(f"从 {filepath} 加载数据失败，请检查文件路径和内容。")
 
     print(f"Total examples to process: {len(data)}")
 
-    # --- 后续 Tokenization 流程 (保持不变) ---
     if args.max_len is None:
-        max_length = tokenizer.max_len
+        # max_length = tokenizer.max_len
+        max_length = tokenizer.model_max_length - args.n_tokens
     else:
-        # 原始长度必须减 1，为提示符 (pt_token) 腾出空间
-        max_length = args.max_len - 1
+        max_length = args.max_len - args.n_tokens
 
     print(f"Tokenizing {len(data)} examples with max_length: {max_length}...")
 
-    # example[0] 现在是 SMILES 字符串
     batch_encoding = tokenizer(
         [example[0] for example in data],
         max_length=max_length,
@@ -507,7 +557,6 @@ def load_and_cache_examples(args, filepath, tokenizer):
     all_attention_mask = torch.tensor([batch_encoding['attention_mask'][i] for i in range(len(data))], dtype=torch.long)
     all_token_type_ids = torch.tensor([batch_encoding['token_type_ids'][i] for i in range(len(data))], dtype=torch.long)
 
-    # example[2] 现在是 0 或 1
     all_labels = torch.tensor([int(example[2]) for example in data], dtype=torch.long)
 
     dataset = TensorDataset(all_input_ids, all_attention_mask, all_token_type_ids, all_labels)
@@ -517,14 +566,13 @@ def load_and_cache_examples(args, filepath, tokenizer):
 if __name__ == '__main__':
     seed_everything(42)
     args = setup_args()
-    # Path to the data which will be used to prompt fine-tune the model
-    args.train_raw_path = '../data/restored_validation.csv'
-    # args.train_raw_path = '../data/restored_test copy.csv'
+    # args.train_raw_path = '../data/restored_validation.csv'
+    args.train_raw_path = '../data/filtered_peptides.csv'
 
     initialize_from_vocab = False
     global tokenizer
-    tokenizer = PreTrainedTokenizerFast.from_pretrained("jonghyunlee/MolGPT_pretrained-by-ZINC15")
-    # tokenizer = PreTrainedTokenizerFast.from_pretrained("./MolGPT_pretrained-by-ZINC15")
+    # tokenizer = PreTrainedTokenizerFast.from_pretrained("jonghyunlee/MolGPT_pretrained-by-ZINC15")
+    tokenizer = PreTrainedTokenizerFast.from_pretrained("./MolGPT_pretrained-by-ZINC15")
     tokenizer.model_max_length = args.max_len
 
     if tokenizer.pad_token_id is None:
@@ -534,28 +582,27 @@ if __name__ == '__main__':
 
     if tokenizer.unk_token is None:
         print("Warning: tokenizer.unk_token is None. Manually setting to '<unk>'.")
-        # 1. 告诉 tokenizer 对象，"<unk>" 字符串是它的 unk_token
         tokenizer.unk_token = "<unk>"
-        # 2. (可选) 检查 unk_token_id 是否被正确设置 (现在它应该是 3)
         print(f"tokenizer.unk_token_id successfully set to: {tokenizer.unk_token_id}")
 
-    # 确保 unk_token 和 eos_token 存在且不同，用于对比学习
     if tokenizer.eos_token_id is None:
         raise ValueError("Tokenizer 必须有 eos_token (nt_id)")
 
     if tokenizer.unk_token_id == tokenizer.eos_token_id:
         raise ValueError("unk_token 和 eos_token 不能相同")
 
-    # can not use relative path here, use absolute path instead
-    # model = GPT2LMHeadModel.from_pretrained("/home/mrjohn/workingspace/CycPeptGPT/output/best_model_with_mask_trainer/checkpoint-177198")
-    model = GPT2LMHeadModel.from_pretrained("/home/xiongshuwen/workingspace/cyc_gpt/output/best_model_with_mask_trainer/checkpoint-177198")
+    model = GPT2LMHeadModel.from_pretrained(
+        "/home/mrjohn/workingspace/CycPeptGPT/output/best_model_with_mask_trainer/checkpoint-177198")
+    # model = GPT2LMHeadModel.from_pretrained("/home/xiongshuwen/workingspace/cyc_gpt/output/best_model_with_mask_trainer/checkpoint-177198")
 
+    # Embedding(2140, 768)
     s_wte = SoftEmbedding(model.get_input_embeddings(),
+                          n_prefixes=args.n_prefixes,
                           n_tokens=args.n_tokens,
-                          initialize_from_vocab=initialize_from_vocab)
+                          initialize_from_vocab=initialize_from_vocab,
+                          mid_dim=args.mid_dim)
     model.set_input_embeddings(s_wte)
 
-    # --- 2. 准备 Datasets ---
-    train_dataloader  = load_and_cache_examples(args, args.train_raw_path, tokenizer=tokenizer)
+    train_dataloader = load_and_cache_examples(args, args.train_raw_path, tokenizer=tokenizer)
 
     prompt_contrast_train(args, model, train_dataloader)

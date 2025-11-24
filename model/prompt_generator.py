@@ -1,3 +1,5 @@
+import os
+import sys
 import time
 import torch
 import argparse
@@ -14,6 +16,8 @@ from transformers import (
     EarlyStoppingCallback,
     get_scheduler
 )
+import random
+from safetensors.torch import load_file
 
 def setup_args():
     parser = argparse.ArgumentParser()
@@ -118,7 +122,7 @@ def predict(args,model, tokenizer, batch_size, text=""):
     model.to(device)
     model.eval()
     time1 = time.time()
-    max_length = 34
+    max_length = 576
 
     input_ids = list(range(100, 100 + 10))
 
@@ -182,10 +186,10 @@ if __name__ == '__main__':
     seed_everything(42)
     args = setup_args()
     # args.model_path, args.vocab_path = '', '../voc/vocab.txt'
-    tokenizer = PreTrainedTokenizerFast.from_pretrained("jonghyunlee/MolGPT_pretrained-by-ZINC15")
-    # tokenizer = PreTrainedTokenizerFast.from_pretrained("./MolGPT_pretrained-by-ZINC15")
-    prompt_model_load = torch.load("./model_ckpt/pytorch_model.bin")
-    model= GPT2LMHeadModel.from_pretrained('./model_ckpt')
+    # tokenizer = PreTrainedTokenizerFast.from_pretrained("jonghyunlee/MolGPT_pretrained-by-ZINC15")
+    tokenizer = PreTrainedTokenizerFast.from_pretrained("./MolGPT_pretrained-by-ZINC15")
+    prompt_model_load = load_file("../output/best_model_prompt/best_model_epoch_61/model.safetensors")
+    model= GPT2LMHeadModel.from_pretrained('../output/best_model_prompt/best_model_epoch_61/')
     s_wte = SoftEmbedding(model.get_input_embeddings(),
                           n_tokens=10,
                           initialize_from_vocab=True)
@@ -196,15 +200,20 @@ if __name__ == '__main__':
 
     output = []
     Seq_all = []
-    for i in range(100):
+    if not os.path.exists('../output/generate/prompt_generate/'):
+        os.makedirs('../output/generate/prompt_generate/')
+    for i in range(500):
         print(i)
-        Seq_list = predict(args,model,tokenizer,batch_size=100)
-
+        Seq_list = predict(args,model,tokenizer,batch_size=64)
+        batch_decoded = []
+        for seq_tokens in Seq_list:
+            batch_decoded.append(decode(seq_tokens))
+        df_batch = pd.DataFrame(batch_decoded)
+        current_mode = 'w' if i == 0 else 'a'
+        df_batch.to_csv('../output/generate/prompt_generate/cyc_prompt_topk_500_64.csv',
+                        mode=current_mode,  # 关键：动态切换模式
+                        index=False,
+                        header=False,
+                        sep=' ')
         Seq_all.extend(Seq_list)
-    for j in Seq_all:
-        output.append(decode(j))
-
-    output = pd.DataFrame(output)
-
-    output.to_csv('amp_prompt_topk.csv', index=False, header=False, sep=' ')
 

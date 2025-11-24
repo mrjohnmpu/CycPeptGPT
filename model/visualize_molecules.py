@@ -124,6 +124,7 @@ def visualize_generated_smiles(csv_path, output_dir):
 if __name__ == "__main__":
     # 确保这个路径指向你 *生成* 的CSV文件
     INPUT_FILE = '../output/generate_cyc_seq.csv'
+    # INPUT_FILE = '../output/generate/prompt_generate/cyc_prompt_topk_500_64.csv'
 
     # 可视化图片将保存到这里
     OUTPUT_IMAGE_DIR = '../output/visualizations'
