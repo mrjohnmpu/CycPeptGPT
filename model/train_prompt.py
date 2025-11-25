@@ -449,7 +449,7 @@ def prompt_contrast_train(args, model, train_dataset):
         output_dir = os.path.join(args.best_model_dir, f"best_model_epoch_{epoch + 1}")
         ckpt_dir = os.path.join(args.ckpt_model_path, f"best_checkpoint_epoch_{epoch + 1}")
         # 在保存最终模型之前，必须调用 reparameterize()
-        model.transformer.wte.reparameterize()
+        # model.transformer.wte.reparameterize()
         early_stopping(epoch_loss, model, optimizer, lr_scheduler, epoch, output_dir, ckpt_dir)
 
         if early_stopping.early_stop:
@@ -571,8 +571,8 @@ if __name__ == '__main__':
 
     initialize_from_vocab = False
     global tokenizer
-    # tokenizer = PreTrainedTokenizerFast.from_pretrained("jonghyunlee/MolGPT_pretrained-by-ZINC15")
-    tokenizer = PreTrainedTokenizerFast.from_pretrained("./MolGPT_pretrained-by-ZINC15")
+    tokenizer = PreTrainedTokenizerFast.from_pretrained("jonghyunlee/MolGPT_pretrained-by-ZINC15")
+    # tokenizer = PreTrainedTokenizerFast.from_pretrained("./MolGPT_pretrained-by-ZINC15")
     tokenizer.model_max_length = args.max_len
 
     if tokenizer.pad_token_id is None:
@@ -591,9 +591,9 @@ if __name__ == '__main__':
     if tokenizer.unk_token_id == tokenizer.eos_token_id:
         raise ValueError("unk_token 和 eos_token 不能相同")
 
-    model = GPT2LMHeadModel.from_pretrained(
-        "/home/mrjohn/workingspace/CycPeptGPT/output/best_model_with_mask_trainer/checkpoint-177198")
-    # model = GPT2LMHeadModel.from_pretrained("/home/xiongshuwen/workingspace/cyc_gpt/output/best_model_with_mask_trainer/checkpoint-177198")
+    # model = GPT2LMHeadModel.from_pretrained(
+    #     "/home/mrjohn/workingspace/CycPeptGPT/output/best_model_with_mask_trainer/checkpoint-177198")
+    model = GPT2LMHeadModel.from_pretrained("/home/xiongshuwen/workingspace/cyc_gpt/output/best_model_with_mask_trainer/checkpoint-177198")
 
     # Embedding(2140, 768)
     s_wte = SoftEmbedding(model.get_input_embeddings(),
