@@ -13,7 +13,11 @@ def setup_args():
     parser = argparse.ArgumentParser()
     # ... 保留原有的参数 ...
     parser.add_argument('--model_path',
+<<<<<<< HEAD
                         default="/home/xiongshuwen/workingspace/cyc_gpt/output/best_model_with_mask_trainer/checkpoint-177198",
+=======
+                        default="/home/mrjohn/workingspace/CycPeptGPT/output/best_model_with_mask_trainer/checkpoint-177198",
+>>>>>>> bf92f3133d91a53b119fa149987076dc458f215c
                         type=str)
     parser.add_argument('--best_model_dir', default="../output/best_model_prompt_pl", type=str)
     parser.add_argument('--train_raw_path', default='../data/filtered_peptides.csv', type=str)
@@ -51,7 +55,11 @@ def main():
     pl.seed_everything(args.seed)
 
     # 1. Tokenizer
+<<<<<<< HEAD
     tokenizer = PreTrainedTokenizerFast.from_pretrained("jonghyunlee/MolGPT_pretrained-by-ZINC15")
+=======
+    tokenizer = PreTrainedTokenizerFast.from_pretrained("./MolGPT_pretrained-by-ZINC15")
+>>>>>>> bf92f3133d91a53b119fa149987076dc458f215c
     tokenizer.model_max_length = args.max_len
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token

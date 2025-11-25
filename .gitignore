@@ -4,5 +4,10 @@ logs/
 *.log
 __pycache__/
 *.pyc
+<<<<<<< HEAD
 lightning_logs/
 early_stop/
+=======
+early_stop/
+lightning_logs
+>>>>>>> bf92f3133d91a53b119fa149987076dc458f215c
