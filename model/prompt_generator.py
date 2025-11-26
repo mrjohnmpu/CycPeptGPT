@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import torch.nn.functional as F
 from transformers import PreTrainedTokenizerFast, GPT2LMHeadModel
+from tqdm.auto import tqdm
 
 # 【修改 1】导入你在训练时定义的 LightningModule
 # 假设你的 LightningModule 定义在 prompt_lightning_module.py 文件中
@@ -21,19 +22,23 @@ import random
 def setup_args():
     parser = argparse.ArgumentParser()
     # 【修改 2】将 model_path 参数改为 ckpt_path，指向 .ckpt 文件
-    parser.add_argument('--ckpt_path', type=str, required=True,
+    parser.add_argument('--ckpt_path', type=str, default="/home/xiongshuwen/workingspace/cyc_gpt/output/best_model_prompt_pl/best-checkpoint-epoch=197-train_loss=61.2934.ckpt",
                         help='Path to the PyTorch Lightning .ckpt file')
-    parser.add_argument('--tokenizer_path', default="./MolGPT_pretrained-by-ZINC15", type=str,
-                        help='Path to the tokenizer folder')
+    # parser.add_argument('--tokenizer_path', default="./MolGPT_pretrained-by-ZINC15", type=str,
+    #                     help='Path to the tokenizer folder')
+    parser.add_argument('--tokenizer_path', default="jonghyunlee/MolGPT_pretrained-by-ZINC15", type=str,
+                    help='Path to the tokenizer folder')
 
-    parser.add_argument('--batch_size', default=5, type=int, required=False, help='batch size')
+    parser.add_argument('--batch_size', default=2, type=int, required=False, help='batch size')
     parser.add_argument('--top_k', default=10, type=int, required=False, help='top k filtering')
-    parser.add_argument('--top_p', default=1.0, type=float, required=False, help='top p filtering')
+    parser.add_argument('--top_p', default=0.9, type=float, required=False, help='top p filtering')
 
     # 这些参数如果是从 checkpoint 加载，通常会被覆盖，但保留着作为默认值
     parser.add_argument('--n_prefixes', default=2, type=int, help='Training used 2 prefixes')
     parser.add_argument('--n_tokens', default=10, type=int, help='Training used 10 tokens')
     parser.add_argument('--target_prefix_idx', default=1, type=int, help='0 for linear, 1 for head_to_tail')
+    parser.add_argument('--target_num', default=100, type=int, help='The number of peptide to be sampled')
+    parser.add_argument('--temperature', default=1.0, type=float, help='The temperature used to sample')
     return parser.parse_args()
 
 
@@ -69,7 +74,7 @@ def top_k_top_p_filtering(
             sorted_indices_to_remove[..., : min_tokens_to_keep - 1] = 0
         sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
         sorted_indices_to_remove[..., 0] = 0
-        indices_to_remove = sorted_indices_to_remove.scatter(2, sorted_indices, sorted_indices_to_remove)
+        indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
         logits = logits.masked_fill(indices_to_remove, filter_value)
     return logits
 
@@ -109,11 +114,11 @@ def predict(args, model, tokenizer, batch_size):
 
     with torch.no_grad():
         for i in range(max_length):
-            # 手动计算 Embedding (利用 SoftEmbedding)
+            # 手动计算 Embedding (利用 SoftEmbedding) [batch, n_prefix_token + bos_token, dim=768]
             inputs_embeds = model.transformer.wte(input_tensor, prefix_indices=prefix_indices)
-
+            # [batch, n_prefix_token + bos_token, vocab_size=2140]
             outputs = model(inputs_embeds=inputs_embeds)
-            next_token_logits = outputs.logits[:, -1, :]
+            next_token_logits = outputs.logits[:, -1, :] / args.temperature #[batch, vocab_size=2140]
 
             next_token_logits = top_k_top_p_filtering(next_token_logits, top_k=args.top_k, top_p=args.top_p)
             probs = F.softmax(next_token_logits, dim=-1)
@@ -179,31 +184,32 @@ if __name__ == '__main__':
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    output_file = os.path.join(output_dir, 'cyc_prompt_generated_from_ckpt.csv')
+    output_file = os.path.join(output_dir, 'cyc_prompt_generated_{}_{}_{}_{}_{}.csv'.format(args.top_k, args.top_p, args.target_prefix_idx, args.target_num, args.temperature))
 
     total_generated = 0
-    target_num = 5  # 或者从 args 获取
+    target_num = args.target_num
+    with tqdm(total=target_num, unit="seq", desc="Generating") as pbar:
+        while total_generated < target_num:
+            current_batch = min(args.batch_size, target_num - total_generated)
+            print(f"Generating batch of {current_batch}...")
 
-    while total_generated < target_num:
-        current_batch = min(args.batch_size, target_num - total_generated)
-        print(f"Generating batch of {current_batch}...")
+            Seq_list = predict(args, model, tokenizer, batch_size=current_batch)
 
-        Seq_list = predict(args, model, tokenizer, batch_size=current_batch)
+            batch_decoded = []
+            for seq_tokens in Seq_list:
+                batch_decoded.append(decode(seq_tokens))
 
-        batch_decoded = []
-        for seq_tokens in Seq_list:
-            batch_decoded.append(decode(seq_tokens))
+            df_batch = pd.DataFrame(batch_decoded)
 
-        df_batch = pd.DataFrame(batch_decoded)
+            current_mode = 'w' if total_generated == 0 else 'a'
+            header = False
+            df_batch.to_csv(output_file, mode=current_mode, index=False, header=header, sep=' ')
 
-        current_mode = 'w' if total_generated == 0 else 'a'
-        header = False
-        df_batch.to_csv(output_file, mode=current_mode, index=False, header=header, sep=' ')
+            total_generated += current_batch
+            # print(f"Total generated: {total_generated}")
+            pbar.update(current_batch)
 
-        total_generated += current_batch
-        print(f"Total generated: {total_generated}")
-
-    print(f"Generation complete! Results saved to {output_file}")
+        print(f"Generation complete! Results saved to {output_file}")
 
 
 

@@ -5,11 +5,14 @@ from torch.nn import CrossEntropyLoss
 import pytorch_lightning as pl
 from transformers import GPT2LMHeadModel, get_scheduler
 from soft_prompt_embedding import SoftEmbedding
-
+from argparse import Namespace
 
 class ContrastivePrefixModule(pl.LightningModule):
     def __init__(self, args, tokenizer):
         super().__init__()
+        # 【新增】兼容性处理：如果是字典（从ckpt加载），转为 Namespace
+        if isinstance(args, dict):
+            args = Namespace(**args)
         self.save_hyperparameters(args)
         self.tokenizer = tokenizer
 
